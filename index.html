@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>DQN 除錯監控</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; background-color: #f0f2f5; }
+        #debug-log { background: #333; color: #0f0; padding: 10px; text-align: left; height: 100px; overflow-y: scroll; margin: 10px auto; width: 400px; font-family: monospace; font-size: 12px; }
+        #status { font-size: 1.2rem; font-weight: bold; margin: 10px; }
+        canvas { background-color: #fff; border: 2px solid #333; }
+    </style>
+</head>
+<body>
+    <h1>DQN 訓練即時監控 (Debug)</h1>
+    
+    <div id="status">初始狀態...</div>
+    <div id="debug-log"></div>
+    
+    <canvas id="gridCanvas" width="400" height="400"></canvas>
+
+    <script>
+        const log = (msg) => {
+            const div = document.getElementById('debug-log');
+            div.innerHTML += `> ${msg}<br>`;
+            div.scrollTop = div.scrollHeight;
+            console.log(msg);
+        };
+
+        const canvas = document.getElementById('gridCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusDiv = document.getElementById('status');
+
+        // 偵測 Codespaces 環境的 WSS/WS 協議
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws/train`;
+        
+        log(`嘗試連線至: ${wsUrl}`);
+        const ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+            log("連線成功！正在發送設定參數...");
+            statusDiv.innerText = "已連線，等待數據...";
+            ws.send(JSON.stringify({ mode: "static", algo: "naive" }));
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                // 第一次收到數據時更新狀態
+                if (data.episode === 0) log("收到第一筆訓練數據！");
+                
+                statusDiv.innerText = `Episode: ${data.episode}, Reward: ${data.reward}`;
+                draw(data);
+            } catch (e) {
+                log(`數據解析失敗: ${e.message}`);
+            }
+        };
+
+        ws.onerror = (err) => {
+            log(`連線發生錯誤。請確認 Ports 分頁中的 8000 是否設為 Public。`);
+            statusDiv.innerText = "連線失敗";
+        };
+
+        ws.onclose = () => {
+            log("連線已關閉。如果是訓練結束，請重新整理網頁。");
+        };
+
+        function draw(data) {
+    const S = 100;
+    ctx.clearRect(0, 0, 400, 400);
+
+    // 畫網格線
+    ctx.strokeStyle = "#eee";
+    for(let i=0; i<=4; i++) {
+        ctx.beginPath(); ctx.moveTo(i*S, 0); ctx.lineTo(i*S, 400); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, i*S); ctx.lineTo(400, i*S); ctx.stroke();
+    }
+
+    // 輔助函式：確保坐標是陣列 [row, col]
+    const getPos = (p) => Array.isArray(p) ? p : [p.row, p.col];
+
+    // 繪製目標 Goal
+    if (data.goal) {
+        const p = getPos(data.goal);
+        ctx.fillStyle = "#4CAF50";
+        ctx.fillRect(p[1]*S+10, p[0]*S+10, 80, 80);
+    }
+
+    // 繪製陷阱 Pits
+    if (data.pits) {
+        data.pits.forEach(pit => {
+            const p = getPos(pit);
+            ctx.fillStyle = "#F44336";
+            ctx.beginPath(); ctx.arc(p[1]*S+50, p[0]*S+50, 35, 0, Math.PI*2); ctx.fill();
+        });
+    }
+
+    // 繪製玩家 Player
+    if (data.player) {
+        const p = getPos(data.player);
+        ctx.fillStyle = "#2196F3";
+        ctx.fillRect(p[1]*S+20, p[0]*S+20, 60, 60);
+    }
+}
+    </script>
+</body>
+</html>

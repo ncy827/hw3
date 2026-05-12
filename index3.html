@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>DQN HW3-3 終極挑戰 (Random Mode)</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background-color: #1a202c; color: #e2e8f0; margin: 0; padding: 20px; }
+        .container { max-width: 700px; margin: 0 auto; background: #2d3748; padding: 30px; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        h1 { color: #f6ad55; font-size: 2rem; margin-bottom: 10px; }
+        #status { font-size: 1.1rem; margin: 20px 0; color: #cbd5e0; background: #4a5568; padding: 10px; border-radius: 8px; }
+        .controls { background: #4a5568; padding: 15px; border-radius: 8px; margin-bottom: 25px; display: flex; justify-content: center; gap: 15px; align-items: center; }
+        select, button { padding: 10px 16px; border-radius: 6px; border: none; font-size: 14px; font-weight: bold; }
+        select { background: #edf2f7; color: #2d3748; }
+        button { background-color: #f6ad55; color: #2d3748; cursor: pointer; transition: 0.3s; }
+        button:hover { background-color: #ed8936; transform: translateY(-2px); }
+        canvas { background-color: #fff; border: 4px solid #4a5568; border-radius: 12px; }
+        #debug-log { background: #000; color: #4fd1c5; padding: 15px; text-align: left; height: 150px; overflow-y: auto; margin-top: 25px; border-radius: 8px; font-family: 'Fira Code', monospace; font-size: 13px; border: 1px solid #4fd1c5; }
+        .badge { font-size: 12px; padding: 4px 10px; border-radius: 20px; background: #f6ad55; color: #2d3748; margin-left: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>DQN 訓練監控 <span class="badge">HW3-3 Random Mode</span></h1>
+        <p>環境升級：PyTorch Lightning + Huber Loss + Gradient Clipping</p>
+        
+        <div class="controls">
+            <span>演算法：</span>
+            <select id="algoSelect">
+                <option value="dueling">Dueling DQN (推薦)</option>
+                <option value="double">Double DQN</option>
+                <option value="naive">Naive DQN</option>
+            </select>
+            <button onclick="startFinalChallenge()">啟動終極訓練</button>
+        </div>
+
+        <div id="status">準備就緒。在隨機模式下，所有物件每局都會變換位置。</div>
+        
+        <canvas id="gridCanvas" width="400" height="400"></canvas>
+        
+        <div id="debug-log"></div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gridCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusDiv = document.getElementById('status');
+        const logDiv = document.getElementById('debug-log');
+        let ws = null;
+
+        function log(msg) {
+            const time = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `[${time}] > ${msg}<br>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function startFinalChallenge() {
+            if (ws) ws.close();
+            
+            const algo = document.getElementById('algoSelect').value;
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/train`;
+            
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                log(`系統啟動：Random Mode | ${algo.toUpperCase()}`);
+                log("穩定性技術：已載入 Huber Loss 與梯度裁剪 (Grad Clip)");
+                statusDiv.innerText = "環境初始化中...";
+                // 強制發送 mode: "random"
+                ws.send(JSON.stringify({ mode: "random", algo: algo }));
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    statusDiv.innerText = `Episode: ${data.episode} | Current Reward: ${data.reward}`;
+                    draw(data);
+                } catch (e) { console.error(e); }
+            };
+
+            ws.onerror = () => log("連線錯誤，請檢查 Codespaces Port 8000 狀態。");
+            ws.onclose = () => log("連線已結束。");
+        }
+
+        function draw(data) {
+            const S = 100;
+            ctx.clearRect(0, 0, 400, 400);
+
+            // 畫背景網格
+            ctx.strokeStyle = "#cbd5e0";
+            ctx.lineWidth = 0.5;
+            for(let i=0; i<=4; i++) {
+                ctx.beginPath(); ctx.moveTo(i*S, 0); ctx.lineTo(i*S, 400); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0, i*S); ctx.lineTo(400, i*S); ctx.stroke();
+            }
+
+            const getPos = (p) => Array.isArray(p) ? p : [0, 0];
+
+            // 畫目標 Goal (發光綠色)
+            if (data.goal) {
+                const p = getPos(data.goal);
+                ctx.fillStyle = "#48bb78";
+                ctx.shadowBlur = 15; ctx.shadowColor = "#48bb78";
+                ctx.fillRect(p[1]*S+15, p[0]*S+15, 70, 70);
+                ctx.shadowBlur = 0;
+            }
+
+            // 畫牆壁 Wall (深灰色)
+            if (data.walls) {
+                data.walls.forEach(w => {
+                    const p = getPos(w);
+                    ctx.fillStyle = "#4a5568";
+                    ctx.fillRect(p[1]*S+5, p[0]*S+5, 90, 90);
+                });
+            }
+
+            // 畫陷阱 Pit (紅色)
+            if (data.pits) {
+                data.pits.forEach(pit => {
+                    const p = getPos(pit);
+                    ctx.fillStyle = "#f56565";
+                    ctx.beginPath(); ctx.arc(p[1]*S+50, p[0]*S+50, 38, 0, Math.PI*2); ctx.fill();
+                });
+            }
+
+            // 畫玩家 Player (鮮豔藍)
+            if (data.player) {
+                const p = getPos(data.player);
+                ctx.fillStyle = "#4299e1";
+                ctx.shadowBlur = 10; ctx.shadowColor = "#4299e1";
+                ctx.fillRect(p[1]*S+25, p[0]*S+25, 50, 50);
+                ctx.shadowBlur = 0;
+            }
+        }
+    </script>
+</body>
+</html>
